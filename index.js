@@ -7,10 +7,52 @@ const bot = new TelegramApi(token, {polling: true})
 const chats = {}
 
 const startGame = async (chatId) => {
-    await bot.sendMessage(chatId, 'Guess the number from 0 to 9!');
     const randomNumber = Math.floor(Math.random() * 10)
     chats[chatId] = randomNumber;
-    await bot.sendMessage(chatId, 'Guess', gameOptions);
+    await bot.sendMessage(chatId, 'Guess the number from 0 to 9!', gameOptions);
+}
+
+const getMyPosition = async (chatId) => {
+    const users = await UserModel.findAll({
+        attributes: ['chatId', 'firstName', 'right', 'wrong'],
+        order: [['right', 'DESC'], ['wrong', 'ASC']]
+    })
+    let userIndex = users.map(i => i.dataValues.chatId).indexOf(chatId)
+    return ++userIndex
+}
+
+function findUsersByLimit(limit) {
+    return UserModel.findAll({
+        attributes: [
+            'chatId', 'firstName', 'right', 'wrong',
+            [sequelize.literal('ROW_NUMBER () OVER (ORDER BY "user"."right" DESC, "user"."wrong" ASC)'), 'num']
+        ],
+        limit: limit
+    })
+}
+
+function Users(chatId, firstName, right, wrong, num) {
+    this.chatId = chatId
+    this.firstName = firstName
+    this.right = right
+    this.wrong = wrong
+    this.num = num
+}
+
+Users.prototype.toString = function usersToString() {
+    return `${this.num}. Name: ${this.firstName} right: ${this.right} wrong: ${this.wrong}\n`
+}
+
+async function userListToString(limit) {
+    const users = await findUsersByLimit(limit)
+    let userList = users.map(i => new Users(
+        i.dataValues.chatId,
+        i.dataValues.firstName,
+        i.dataValues.right,
+        i.dataValues.wrong,
+        i.dataValues.num
+    ));
+    return userList.join('').toString()
 }
 
 const start = async ()  => {
@@ -25,7 +67,8 @@ const start = async ()  => {
     await bot.setMyCommands([
         {command: '/start', description: 'Welcome message'},
         {command: '/info', description: 'Get user info'},
-        {command: '/game', description: 'Game guess the number'}
+        {command: '/game', description: 'Game guess the number'},
+        {command: '/position', description: 'Get my position'}
     ])
 
     bot.on('message', async msg => { // слушатель события на обработку полученных сообщений
@@ -49,12 +92,33 @@ const start = async ()  => {
             if (text === '/info') {
                 const user = await UserModel.findOne({where: {chatId}})
                 return bot.sendMessage(chatId,
-                    `${firstName}, you got right: ${user.right}, wrong: ${user.wrong}`);
+                    `${firstName}, you got right: ${user.right}, wrong: ${user.wrong}
+                    \nPercentage of correct answers: ${Math.round(user.right/user.wrong * 100)}%`);
             }
             if (text === '/game') {
                 return startGame(chatId);
             }
-            return bot.sendMessage(chatId, "I don't understand you, let's try again! Choose the commands on menu!");
+            if (text === '/position') {
+                const position = await getMyPosition(chatId)
+                if (position === 0) {
+                    return console.error(chatId, 'Error, something went wrong!');
+                } else if (position <=3) {
+                    let a = await userListToString(3)
+                    return bot.sendMessage(chatId, `You are on ${position} position \n\n${a}`)
+                } else if (position === 4) {
+                    let a = await userListToString(4)
+                    return bot.sendMessage(chatId, `You are on ${position} position \n\n${a}`)
+                } else {
+                    let a = await userListToString(3)
+                    const user = await UserModel.findOne({where: {chatId}})
+                    return bot.sendMessage(chatId, `You are on ${position} position\n\n` +
+                        `${a}\n` +
+                        `------------------------------------\n` +
+                        `${position}. You right: ${user.right} wrong: ${user.wrong}`
+                    )
+                }
+            }
+            return bot.sendMessage(chatId, "I don't understand you! Choose the commands on menu!");
         } catch (e) {
             return bot.sendMessage(chatId, 'Error, something went wrong!');
         }
@@ -72,7 +136,7 @@ const start = async ()  => {
             await bot.sendMessage(chatId, `Congratulations, you right: ${chats[chatId]}`, againOptions);
         } else {
             user.wrong += 1;
-            await bot.sendMessage(chatId, `Unfortunately, you wrong, the bot choose: ${chats[chatId]}`, againOptions);
+            await bot.sendMessage(chatId, `Unfortunately, you picked: ${data}, and the bot: ${chats[chatId]}`, againOptions)
         }
         await user.save();
     })

@@ -55,6 +55,10 @@ async function userListToString(limit) {
     return userList.join('').toString()
 }
 
+async function deleteMessage(chatId, msgId) {
+    await bot.deleteMessage(chatId, msgId)
+}
+
 const start = async ()  => {
 
     try {
@@ -127,15 +131,20 @@ const start = async ()  => {
     bot.on('callback_query', async msg => {
         const data = msg.data
         const chatId = String(msg.message.chat.id)
+        const msgId = msg.message.message_id
+
         if (data === '/again') {
             return startGame(chatId)
         }
+
         const user = await UserModel.findOne({where: {chatId}})
         if (data == chats[chatId]) {
             user.right += 1;
+            await deleteMessage(chatId, msgId)
             await bot.sendMessage(chatId, `Congratulations, you right: ${chats[chatId]}`, againOptions);
         } else {
             user.wrong += 1;
+            await deleteMessage(chatId, msgId)
             await bot.sendMessage(chatId, `Unfortunately, you picked: ${data}, and the bot: ${chats[chatId]}`, againOptions)
         }
         await user.save();
